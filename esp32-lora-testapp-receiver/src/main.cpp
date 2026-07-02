@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <SPI.h>
+#include <Wire.h>
 #include <RadioLib.h>
 #include <U8g2lib.h>
 #include "ReceptionStats.h"
@@ -14,6 +15,23 @@ static constexpr int LORA_BUSY = 40;
 SX1262 radio = new Module(LORA_NSS, LORA_DIO1, LORA_RST, LORA_BUSY);
 
 U8G2_SH1107_SEEED_128X128_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
+
+// Seeed Grove 1.12" OLED (SH1107) default 7-bit I2C address.
+static constexpr uint8_t OLED_I2C_ADDR = 0x3C;
+
+// Set once at startup after probing the I2C bus. All display access below
+// is guarded by this flag so the app runs fully headless (LoRa RX + serial
+// logging still work) if no OLED is wired up. This is needed because on
+// ESP32 a floating/pulled-down SDA line with no device present can hang
+// the Wire bus indefinitely, so we must detect absence *before* ever
+// calling u8g2.begin() or any drawing function.
+static bool displayAvailable = false;
+
+static bool probeOledDisplay() {
+    Wire.begin();
+    Wire.beginTransmission(OLED_I2C_ADDR);
+    return Wire.endTransmission() == 0;
+}
 
 static constexpr int LED_PIN = D0;
 
@@ -64,6 +82,8 @@ static AppMode appMode = MODE_INIT;
 void handleSerialCommand();
 
 void updateDisplay() {
+    if (!displayAvailable) return;
+
     char buf[22];
     u8g2.clearBuffer();
 
@@ -118,8 +138,6 @@ void setup() {
 
     receptionLog.begin();
 
-    blinkLed(5, 150, 150);
-
     Serial.print("[SX1262] Initializing ... ");
     int state = radio.begin(LORA_FREQ_MHZ, LORA_BW_KHZ, LORA_SF, LORA_CR,
                             LORA_SYNC_WORD, LORA_TX_POWER, LORA_PREAMBLE);
@@ -132,13 +150,22 @@ void setup() {
         Serial.println(")");
     }
 
-    u8g2.begin();
+    Serial.print("[OLED] Probing I2C display ... ");
+    displayAvailable = probeOledDisplay();
+    if (displayAvailable) {
+        Serial.println("found");
+        u8g2.begin();
+    } else {
+        Serial.println("not found — running headless (serial only)");
+    }
 
     if (state != RADIOLIB_ERR_NONE) {
-        u8g2.clearBuffer();
-        u8g2.setFont(u8g2_font_6x12_tr);
-        u8g2.drawStr(0, 24, "LoRa INIT FAILED");
-        u8g2.sendBuffer();
+        if (displayAvailable) {
+            u8g2.clearBuffer();
+            u8g2.setFont(u8g2_font_6x12_tr);
+            u8g2.drawStr(0, 24, "LoRa INIT FAILED");
+            u8g2.sendBuffer();
+        }
         while (true) { blinkLed(1, 100, 0); delay(900); }
     }
 
@@ -146,30 +173,34 @@ void setup() {
     Serial.print(EXPECTED_PAYLOAD_LEN);
     Serial.println(" bytes");
 
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_6x12_tr);
-    u8g2.drawStr(0, 12, "Initialized.");
-    u8g2.drawStr(0, 30, "Waiting for serial");
-    u8g2.drawStr(0, 44, "commands (15s)...");
-    u8g2.drawStr(0, 68, "dump  - print logs");
-    u8g2.drawStr(0, 82, "list  - show files");
-    u8g2.drawStr(0, 96, "clean - delete logs");
-    u8g2.drawStr(0, 110, "help  - show cmds");
-    u8g2.sendBuffer();
+    if (displayAvailable) {
+        u8g2.clearBuffer();
+        u8g2.setFont(u8g2_font_6x12_tr);
+        u8g2.drawStr(0, 12, "Initialized.");
+        u8g2.drawStr(0, 30, "Waiting for serial");
+        u8g2.drawStr(0, 44, "commands (10s)...");
+        u8g2.drawStr(0, 68, "dump  - print logs");
+        u8g2.drawStr(0, 82, "list  - show files");
+        u8g2.drawStr(0, 96, "clean - delete logs");
+        u8g2.drawStr(0, 110, "help  - show cmds");
+        u8g2.sendBuffer();
+    }
 
     Serial.println();
-    Serial.println("Serial command window (15s) — type help for commands");
+    Serial.println("Serial command window (10s) — type help for commands");
 
-    uint32_t cmdWindowEnd = millis() + 15000;
+    uint32_t cmdWindowEnd = millis() + 10000;
     while (millis() < cmdWindowEnd) {
         if (Serial.available()) {
             appMode = MODE_COMMAND;
             Serial.println("Entered command mode (LoRa receive disabled)");
-            u8g2.clearBuffer();
-            u8g2.drawStr(0, 24, "Command mode");
-            u8g2.drawStr(0, 48, "LoRa RX disabled");
-            u8g2.drawStr(0, 76, "Type: help");
-            u8g2.sendBuffer();
+            if (displayAvailable) {
+                u8g2.clearBuffer();
+                u8g2.drawStr(0, 24, "Command mode");
+                u8g2.drawStr(0, 48, "LoRa RX disabled");
+                u8g2.drawStr(0, 76, "Type: help");
+                u8g2.sendBuffer();
+            }
             handleSerialCommand();
             break;
         }
@@ -179,6 +210,7 @@ void setup() {
     if (appMode != MODE_COMMAND) {
         appMode = MODE_RECEIVE;
         Serial.println("No commands — entering LoRa receive mode");
+        blinkLed(3, 150, 150);
         updateDisplay();
     }
 }
