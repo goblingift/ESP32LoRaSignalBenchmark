@@ -2,7 +2,7 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 
-// Logs "elapsed uptime, voltage" rows to /battery-N.csv on LittleFS.
+// Logs "elapsed uptime, voltage, state" rows to /battery-N.csv on LittleFS.
 // N counts up across reboots by probing for the first free filename.
 class BatteryLog {
 public:
@@ -34,7 +34,7 @@ public:
         snprintf(buf, len, "%02lu:%02lu:%02lu", hh, mm, ss);
     }
 
-    void record(float voltage) {
+    void record(float voltage, const char* state) {
         if (filePath.isEmpty()) return;
 
         File f = LittleFS.open(filePath, FILE_APPEND, true);
@@ -46,7 +46,7 @@ public:
         char timestamp[16];
         formatElapsed(timestamp, sizeof(timestamp));
         char line[48];
-        snprintf(line, sizeof(line), "%s, %.2f\n", timestamp, voltage);
+        snprintf(line, sizeof(line), "%s, %.2f, %s\n", timestamp, voltage, state);
         f.print(line);
         f.close();
 
@@ -133,7 +133,7 @@ private:
             filePath = "";
             return;
         }
-        f.println("timestamp,voltage");
+        f.println("timestamp,voltage,state");
         f.close();
         Serial.print("[Log] Created ");
         Serial.println(filePath);

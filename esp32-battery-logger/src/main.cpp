@@ -30,8 +30,9 @@ static bool probeOledDisplay() {
 
 static constexpr int LED_PIN = D0;
 
-static constexpr uint32_t COMMAND_WINDOW_MS  = 15000;
-static constexpr uint32_t MEASURE_INTERVAL_MS = 15000;
+static constexpr uint32_t COMMAND_WINDOW_MS   = 15000;
+static constexpr uint32_t MEASURE_INTERVAL_MS = 60000;
+static constexpr uint32_t IDLE_SETTLE_MS      = 1000;
 
 enum AppMode { MODE_INIT, MODE_COMMAND, MODE_LOGGING };
 static AppMode appMode = MODE_INIT;
@@ -159,10 +160,22 @@ void loop() {
     static uint32_t nextMeasure = 0;
     if (millis() >= nextMeasure) {
         nextMeasure = millis() + MEASURE_INTERVAL_MS;
-        float voltage = ina260.readBusVoltage() / 1000.0f;
-        float current = ina260.readCurrent() / 1000.0f;
-        batteryLog.record(voltage);
-        updateDisplay(voltage, current);
+
+        // Loaded reading — heater relay is on at this point.
+        float voltageLoaded = ina260.readBusVoltage() / 1000.0f;
+        float currentLoaded = ina260.readCurrent() / 1000.0f;
+        batteryLog.record(voltageLoaded, "loaded");
+        updateDisplay(voltageLoaded, currentLoaded);
+
+        // Idle/rest reading — briefly de-energize the heater to see the
+        // battery voltage recover without load.
+        relay.turn_off_channel(RELAY_CH_HEATER);
+        delay(IDLE_SETTLE_MS);
+        float voltageIdle = ina260.readBusVoltage() / 1000.0f;
+        batteryLog.record(voltageIdle, "idle");
+        delay(IDLE_SETTLE_MS);
+        relay.turn_on_channel(RELAY_CH_HEATER);
+
         blinkLed(1, 50, 0);
     }
     delay(50);
