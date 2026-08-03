@@ -4,9 +4,10 @@
 
 // ===================== CONFIGURATION =====================
 static constexpr uint8_t LORA_SF          = 7;        // Spreading factor (6-12)
-static constexpr int8_t  LORA_TX_POWER    = 13;       // Transmit power in dBm (2-22)
-static constexpr uint32_t NUM_MESSAGES    = 5;       // Number of messages to send
-static constexpr uint32_t INTERVAL_MS     = 2000;     // Time between messages in ms
+static constexpr int8_t  LORA_TX_POWER    = 2;       // Transmit power in dBm (2-22)
+static constexpr uint32_t NUM_MESSAGES    = 200;       // Number of messages to send
+static constexpr uint32_t INTERVAL_MS     = 3000;     // Time between messages in ms
+#define ACTIVE_PAYLOAD PAYLOAD_SMALL           // Payload to send: PAYLOAD_LARGE, PAYLOAD_MEDIUM, PAYLOAD_SMALL
 // =========================================================
 
 // Fixed LoRa parameters (must match receiver)
@@ -26,7 +27,8 @@ SX1262 radio = new Module(LORA_NSS, LORA_DIO1, LORA_RST, LORA_BUSY);
 
 static constexpr int LED_PIN = D0;
 
-static const uint8_t PAYLOAD[] = {
+// Productive, Large payload: including 6 sensor measurements + AES-GCM encryption = 190 bytes
+static const uint8_t PAYLOAD_LARGE[] = {
     0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC1, 0x4E, 0xA3, 0x45,
     0x3B, 0x26, 0x80, 0x3D, 0x9A, 0xBF, 0xC5, 0xE6, 0xCB, 0x35, 0xAF, 0x87, 0x4C, 0xAF, 0x9D, 0x0C,
     0x7F, 0x46, 0xC0, 0x2D, 0x2D, 0xD8, 0xEE, 0xBF, 0x43, 0x1A, 0x80, 0x6D, 0x6E, 0xDA, 0x74, 0x85,
@@ -40,7 +42,42 @@ static const uint8_t PAYLOAD[] = {
     0x6E, 0x17, 0x41, 0x13, 0x38, 0x0E, 0x47, 0xBC, 0x1F, 0xC4, 0x8A, 0x09, 0x3C, 0x63, 0x90, 0xB3,
     0xC6, 0xAF, 0x10, 0x3F, 0xC7, 0x37, 0x26, 0xEA, 0xCC, 0x8F, 0x02, 0x3B, 0xB2, 0x30
 };
-static constexpr size_t PAYLOAD_LEN = sizeof(PAYLOAD);
+
+// For testing purpose only: Medium payload: 1 full measurement (27B) + AES-GCM (28B) = 55 bytes
+static const uint8_t PAYLOAD_MEDIUM[] = {
+    // Plaintext measurement (27 bytes)
+    // Example layout (adjust to your exact packing):
+    // timestamp (4B) + device_id (1B) + v(2B) + i(2B) + lux(2B) + co2(2B)
+    // + t(2B) + h(2B) + p(2B) + r(2B) + wl(1B) + wg(2B) + snd(2B) + rl(1B)
+    0x00, 0x00, 0x00, 0x00,  // timestamp
+    0x01,                   // device_id
+    0x00, 0x00,             // voltage
+    0x00, 0x00,             // current
+    0x00, 0x00,             // light
+    0x00, 0x00,             // CO2
+    0x00, 0x00,             // temperature
+    0x00, 0x00,             // humidity
+    0x00, 0x00,             // pitch
+    0x00, 0x00,             // roll
+    0x00,                   // water level
+    0x00, 0x00,             // weight
+    0x00, 0x00,             // peak loudness
+    0x00,                   // actuator status
+
+    // AES-GCM ciphertext + nonce + tag (28 bytes)
+    0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11,
+    0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99,
+    0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11,
+    0x22, 0x33, 0x44, 0x55
+};
+
+// For testing purpose only: Small payload (unencrypted): timestamp (4B) + device_id (1B) = 5 bytes
+static const uint8_t PAYLOAD_SMALL[] = {
+    0x01, 0x00, 0x00, 0x00,  // timestamp = 1 (uint32_t, little-endian)
+    0x01                     // device_id = 1 (uint8_t)
+};
+
+static constexpr size_t PAYLOAD_LEN = sizeof(ACTIVE_PAYLOAD);
 
 void blinkLed(int count, int onMs, int offMs) {
     for (int i = 0; i < count; i++) {
@@ -95,7 +132,7 @@ void setup() {
         Serial.print(NUM_MESSAGES);
         Serial.print(" ... ");
 
-        int txState = radio.transmit(PAYLOAD, PAYLOAD_LEN);
+        int txState = radio.transmit(ACTIVE_PAYLOAD, PAYLOAD_LEN);
 
         if (txState == RADIOLIB_ERR_NONE) {
             Serial.println("OK");
